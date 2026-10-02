@@ -1,0 +1,11 @@
+services:
+  media-streamer:
+    build: .
+    ports: ["3000:3000"]
+    environment:
+      MEDIA_ROOTS: '[{"id":"local","path":"/media/local"}]'
+      METADATA_ROOT: /metadata
+    volumes:
+      - ${MEDIA_PATH:?Set MEDIA_PATH in .env}:/media/local:ro
+      - ${METADATA_PATH:?Set METADATA_PATH in .env}:/metadata
+    restart: unless-stopped

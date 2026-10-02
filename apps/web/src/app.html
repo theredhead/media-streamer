@@ -1,0 +1,43 @@
+<main>
+  <header><div><p class="eyebrow">YOUR LOCAL LIBRARY</p><h1>Media Streamer</h1><p>Photos, albums and videos from your own filesystem.</p></div>
+    <nav><ui-button variant="outlined" (click)="checkCapabilities()">Device check</ui-button><ui-button variant="outlined" (click)="theme.toggleTheme()">Theme</ui-button><ui-button [disabled]="busy()" (click)="load(true)">Rescan</ui-button></nav>
+  </header>
+  @if (selectedVideo() || selectedAlbum()) {
+    <ui-button variant="outlined" (click)="close()">Back to library</ui-button>
+    <section class="viewer">
+      @if (selectedVR(); as item) {
+        <ui-button variant="outlined" (click)="selectedVR.set(null)">Back to player</ui-button>
+        @defer (on immediate) { <app-vr-viewer [item]="item" /> }
+      } @else {
+      @if (selectedVideo(); as item) {
+        <h2>{{ item.title }}</h2>
+        <ui-button (click)="selectedVR.set(item)">VR viewer</ui-button>
+        <ui-media-player [source]="{url: item.contentUrl, type: item.mimeType}" [ariaLabel]="item.title" (mediaError)="error.set('Playback failed. This browser may not support the file codec.')" />
+      }
+      @if (selectedAlbum(); as album) {
+        <div class="album"><ui-media-gallery [inline]="true" [items]="galleryItems()" /></div>
+        <div class="album-vr-list">@for (item of album; track item.id) { <ui-button variant="outlined" (click)="selectedVR.set(item)">View {{ item.title }} in VR</ui-button> }</div>
+      }
+      }
+    </section>
+  } @else {
+    <div class="library-filters">
+    <label class="search">Search the library<input type="search" placeholder="Title, folder or tag" [value]="query()" (input)="query.set($any($event.target).value)"></label>
+    <div class="type-filter" role="group" aria-label="Media types">
+      @for (option of typeOptions; track option.id) {
+        <button type="button" [attr.aria-pressed]="selectedTypes().includes(option.id)" (click)="toggleType(option.id)"><ui-icon [svg]="option.icon" [size]="20" />{{ option.label }}</button>
+      }
+    </div>
+    </div>
+    <p aria-live="polite">{{ busy() ? 'Scanning library…' : entries().length + ' albums and videos' }}</p>
+    <section class="grid">
+      @for (entry of entries(); track entry.id) {
+        @let media = cardMedia(entry);
+        <ui-card variant="outlined"><ui-card-header [icon]="media.icon" [iconAriaLabel]="media.label">{{ media.label }} · {{ entry.title }}</ui-card-header><ui-card-body><p>{{ entry.detail }}</p></ui-card-body><ui-card-footer><ui-button variant="outlined" (click)="open(entry)">Open {{ entry.album ? 'album' : 'video' }}</ui-button></ui-card-footer></ui-card>
+      } @empty { @if (!busy()) { <p>No matching media. Add files to a configured media root, then rescan.</p> } }
+    </section>
+  }
+  @if (error()) { <p role="alert">{{ error() }}</p> }
+  @if (diagnostics()) { <details open><summary>Device capabilities</summary><pre class="diagnostics">{{ diagnostics() }}</pre></details> }
+  @if (snapshot().warnings.length) { <details><summary>Library warnings ({{ snapshot().warnings.length }})</summary>@for (warning of snapshot().warnings; track $index) { <p>{{ warning }}</p> }</details> }
+</main>
