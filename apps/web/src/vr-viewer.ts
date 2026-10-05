@@ -1,4 +1,4 @@
-import { AfterViewInit, ChangeDetectionStrategy, Component, ElementRef, NgZone, OnDestroy, inject, input, signal, viewChild } from '@angular/core';
+import { AfterViewInit, ChangeDetectionStrategy, Component, ElementRef, NgZone, OnDestroy, inject, input, output, signal, viewChild } from '@angular/core';
 import { UIButton, UIMediaPlayer } from '@theredhead/lucid-kit';
 import * as THREE from 'three';
 import type { MediaItem } from '../../../packages/contracts/media';
@@ -9,28 +9,54 @@ import { VRControls } from './vr-controls';
   template: `
     <h2>{{ item().title }}</h2>
     <p>{{ item().projection === 'flat' ? 'Flat' : item().projection + '°' }} · {{ item().stereoMode }} · {{ status() }}</p>
+    @if (item().mediaType === 'video') {
+      <div class="viewer-tabs" role="tablist" aria-label="Video view">
+        <button type="button" id="vr-preview-tab" role="tab" aria-controls="vr-preview-panel" [attr.aria-selected]="activeTab() === 'vr'" [attr.tabindex]="activeTab() === 'vr' ? 0 : -1" (click)="activeTab.set('vr')" (keydown)="switchTabWithKey($event)">VR preview</button>
+        <button type="button" id="normal-player-tab" role="tab" aria-controls="normal-player-panel" [attr.aria-selected]="activeTab() === 'player'" [attr.tabindex]="activeTab() === 'player' ? 0 : -1" (click)="activeTab.set('player')" (keydown)="switchTabWithKey($event)">Normal player</button>
+      </div>
+    }
+    <section id="vr-preview-panel" role="tabpanel" aria-labelledby="vr-preview-tab" [hidden]="activeTab() !== 'vr'">
     <div class="vr-stage" #stage aria-label="VR preview" (pointerdown)="beginDrag($event)" (pointermove)="drag($event)" (pointerup)="endDrag()" (pointercancel)="endDrag()"></div>
     <div class="vr-actions">
+      @if (item().mediaType === 'video') { <ui-button variant="outlined" [disabled]="!ready()" (click)="togglePlayback()">Play / pause</ui-button> }
       <ui-button [disabled]="!supported() || !ready() || entering()" (click)="enterVR()">{{ entering() ? 'Entering VR…' : 'Enter VR' }}</ui-button>
       <ui-button variant="outlined" (click)="resetView()">Reset view</ui-button>
+      <label>Stereo layout<select [value]="previewStereo()" (change)="setStereo($any($event.target).value)"><option value="mono">Mono</option><option value="sbs">Side by side</option><option value="ou">Over-under</option></select></label>
       <label><input type="checkbox" [checked]="swapEyes()" (change)="setSwap($any($event.target).checked)"> Swap eyes</label>
     </div>
     <p>Drag the preview to look around. In VR, press A on the right controller to show or hide controls. Look slightly down, then point either controller and press its trigger to play/pause, skip or exit. Hold the trigger on the timeline to scrub.</p>
+    </section>
     @if (item().mediaType === 'video') {
-      <div #playerHost><ui-media-player [source]="{url: item().contentUrl, type: item().mimeType}" [ariaLabel]="item().title" (mediaLoadedMetadata)="attachVideo()" (mediaError)="status.set('Video decoding failed. Try a compatible codec or lower resolution.')" /></div>
+      <div id="normal-player-panel" role="tabpanel" aria-labelledby="normal-player-tab" [hidden]="activeTab() !== 'player'" #playerHost><ui-media-player [source]="{url: item().contentUrl, type: item().mimeType}" [ariaLabel]="item().title" (mediaLoadedMetadata)="attachVideo()" (mediaError)="status.set('Video decoding failed. Try a compatible codec or lower resolution.')" /></div>
     }
     @if (error()) { <p role="alert">{{ error() }}</p> }
   `,
-  styles: `:host { display:block; } .vr-stage { height: min(55vh, 480px); min-height: 260px; background: #000; touch-action: none; overflow:hidden; border-radius:12px; } .vr-actions {display:flex; align-items:center; flex-wrap:wrap; gap:12px; margin:16px 0;} label {display:flex; align-items:center; gap:8px;} `,
+  styles: `:host { display:block; } [hidden] { display:none !important; } .viewer-tabs { display:flex; gap:4px; margin:16px 0; border-bottom:1px solid var(--ui-border); } .viewer-tabs button { padding:10px 16px; border:0; border-bottom:2px solid transparent; background:transparent; color:var(--ui-text); font:inherit; cursor:pointer; } .viewer-tabs button[aria-selected=true] { border-bottom-color:var(--ui-accent); color:var(--ui-accent); } .viewer-tabs button:focus-visible { outline:2px solid var(--ui-accent); outline-offset:-2px; } .vr-stage { height: min(55vh, 480px); min-height: 260px; background: #000; touch-action: none; overflow:hidden; border-radius:12px; } .vr-actions {display:flex; align-items:center; flex-wrap:wrap; gap:12px; margin:16px 0;} label {display:flex; align-items:center; gap:8px;} `,
 })
 export class VRViewer implements AfterViewInit, OnDestroy {
   readonly item = input.required<MediaItem>();
+  readonly activeTab = signal<'vr' | 'player'>('vr');
+  switchTabWithKey(event: KeyboardEvent) {
+    if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+    event.preventDefault();
+    const tab = event.key === 'Home' ? 'vr' : event.key === 'End' ? 'player' : this.activeTab() === 'vr' ? 'player' : 'vr';
+    this.activeTab.set(tab);
+    const button = event.currentTarget as HTMLButtonElement;
+    button.parentElement?.querySelector<HTMLButtonElement>(tab === 'vr' ? '#vr-preview-tab' : '#normal-player-tab')?.focus();
+  }
   readonly status = signal('Checking WebXR…');
   readonly error = signal('');
   readonly supported = signal(false);
   readonly ready = signal(false);
   readonly entering = signal(false);
   readonly swapEyes = signal(false);
+  readonly previewStereo = signal<MediaItem['stereoMode']>('mono');
+  readonly stereoChanged = output<MediaItem['stereoMode']>();
+  setStereo(mode: MediaItem['stereoMode']) {
+    this.previewStereo.set(mode);
+    this.applyEyeUVs();
+    this.stereoChanged.emit(mode);
+  }
   private readonly zone = inject(NgZone);
   private readonly stage = viewChild.required<ElementRef<HTMLDivElement>>('stage');
   private readonly playerHost = viewChild<ElementRef<HTMLDivElement>>('playerHost');
@@ -49,6 +75,7 @@ export class VRViewer implements AfterViewInit, OnDestroy {
   private pitch = 0;
 
   ngAfterViewInit() {
+    this.previewStereo.set(this.item().stereoMode);
     try {
       this.renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: 'high-performance' });
       this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
@@ -70,7 +97,7 @@ export class VRViewer implements AfterViewInit, OnDestroy {
       this.zone.runOutsideAngular(() => this.renderer!.setAnimationLoop(() => {
         const active = this.renderer!.xr.isPresenting;
         this.controls!.update(active ? this.renderer!.xr.getCamera() : this.camera, active);
-        this.renderer!.render(this.scene, this.camera);
+        if (active || this.activeTab() === 'vr') this.renderer!.render(this.scene, this.camera);
       }));
       if (this.item().mediaType === 'image') {
         new THREE.TextureLoader().load(this.item().contentUrl, texture => {
@@ -144,8 +171,8 @@ export class VRViewer implements AfterViewInit, OnDestroy {
       for (let vertex = 0; vertex < uv.count; vertex++) {
         let u = original[vertex * 2];
         let v = original[vertex * 2 + 1];
-        if (this.item().stereoMode === 'sbs') u = u * 0.5 + eye * 0.5;
-        if (this.item().stereoMode === 'ou') v = v * 0.5 + (eye === 0 ? 0.5 : 0);
+        if (this.previewStereo() === 'sbs') u = u * 0.5 + eye * 0.5;
+        if (this.previewStereo() === 'ou') v = v * 0.5 + (eye === 0 ? 0.5 : 0);
         uv.setXY(vertex, u, v);
       }
       uv.needsUpdate = true;
@@ -174,7 +201,7 @@ export class VRViewer implements AfterViewInit, OnDestroy {
       if (this.session) await this.session.end().catch(() => {});
     } finally { this.entering.set(false); }
   }
-  private readonly togglePlayback = () => {
+  readonly togglePlayback = () => {
     if (!this.video) return;
     if (this.video.paused) void this.video.play().catch(() => this.error.set('Video playback failed.'));
     else this.video.pause();

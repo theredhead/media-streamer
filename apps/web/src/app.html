@@ -1,22 +1,25 @@
 <main>
-  <header><div><p class="eyebrow">YOUR LOCAL LIBRARY</p><h1>Media Streamer</h1><p>Photos, albums and videos from your own filesystem.</p></div>
-    <nav><ui-button variant="outlined" (click)="checkCapabilities()">Device check</ui-button><ui-button variant="outlined" (click)="theme.toggleTheme()">Theme</ui-button><ui-button [disabled]="busy()" (click)="load(true)">Rescan</ui-button></nav>
-  </header>
   @if (selectedVideo() || selectedAlbum()) {
     <ui-button variant="outlined" (click)="close()">Back to library</ui-button>
     <section class="viewer">
       @if (selectedVR(); as item) {
-        <ui-button variant="outlined" (click)="selectedVR.set(null)">Back to player</ui-button>
-        @defer (on immediate) { <app-vr-viewer [item]="item" /> }
+        @defer (on immediate) { <app-vr-viewer [item]="item" (stereoChanged)="saveMetadata(item.id, {stereoMode: $event})" /> }
       } @else {
       @if (selectedVideo(); as item) {
         <h2>{{ item.title }}</h2>
-        <ui-button (click)="selectedVR.set(item)">VR viewer</ui-button>
+        @if (isVR(item)) { <ui-button (click)="openVR(item)">VR viewer</ui-button> }
         <ui-media-player [source]="{url: item.contentUrl, type: item.mimeType}" [ariaLabel]="item.title" (mediaError)="error.set('Playback failed. This browser may not support the file codec.')" />
+        @if (item.posterFrames?.length) {
+          <div class="poster-frames" aria-label="Movie poster frames">
+            @for (frame of item.posterFrames; track frame.url) {
+              <figure><img [src]="frame.url" [alt]="item.title + ' at ' + frameTime(frame.time)" loading="lazy"><figcaption>{{ frameTime(frame.time) }}</figcaption></figure>
+            }
+          </div>
+        } @else { <p>Poster frames are pending. Extraction requires FFmpeg on the server.</p> }
       }
       @if (selectedAlbum(); as album) {
         <div class="album"><ui-media-gallery [inline]="true" [items]="galleryItems()" /></div>
-        <div class="album-vr-list">@for (item of album; track item.id) { <ui-button variant="outlined" (click)="selectedVR.set(item)">View {{ item.title }} in VR</ui-button> }</div>
+        <div class="album-vr-list">@for (item of album; track item.id) { @if (isVR(item)) { <ui-button variant="outlined" (click)="openVR(item)">View {{ item.title }} in VR</ui-button> } }</div>
       }
       }
     </section>
@@ -25,7 +28,25 @@
     <label class="search">Search the library<input type="search" placeholder="Title, folder or tag" [value]="query()" (input)="query.set($any($event.target).value)"></label>
     <div class="type-filter" role="group" aria-label="Media types">
       @for (option of typeOptions; track option.id) {
-        <button type="button" [attr.aria-pressed]="selectedTypes().includes(option.id)" (click)="toggleType(option.id)"><ui-icon [svg]="option.icon" [size]="20" />{{ option.label }}</button>
+        <button type="button" [attr.aria-label]="option.label" [title]="option.label" [attr.aria-pressed]="selectedTypes().includes(option.id)" (click)="toggleType(option.id)"><ui-icon [svg]="option.icon" [size]="20" /></button>
+      }
+    </div>
+    <div class="type-filter sort-filter" role="group" aria-label="Sort library">
+      @for (option of sortOptions; track option.id) {
+        <button type="button" [attr.aria-pressed]="sortField() === option.id" [attr.aria-label]="option.label + (sortField() === option.id ? (sortAscending() ? ', ascending; click for descending' : ', descending; click for ascending') : ', sort by ' + option.label.toLowerCase())" [title]="sortField() === option.id ? (sortAscending() ? 'Ascending; click to reverse' : 'Descending; click to reverse') : 'Sort by ' + option.label.toLowerCase()" (click)="toggleSort(option.id)">
+          {{ option.label }}<span class="sort-direction" [class.inactive]="sortField() !== option.id"><ui-icon [svg]="sortDirectionIcon()" [size]="18" /></span>
+        </button>
+      }
+    </div>
+    <div class="settings">
+      <button type="button" class="settings-toggle" aria-label="Settings" title="Settings" [attr.aria-expanded]="settingsOpen()" aria-controls="settings-dropdown" (click)="settingsOpen.update(toggleSettings)"><ui-icon [svg]="settingsIcon" [size]="20" /></button>
+      @if (settingsOpen()) {
+        <div id="settings-dropdown" class="settings-dropdown">
+          <button type="button" [attr.aria-pressed]="editMode()" (click)="toggleEditMode()">{{ editMode() ? 'Exit edit mode' : 'Edit mode' }}</button>
+          <button type="button" (click)="settingsOpen.set(false); checkCapabilities()">Device check</button>
+          <button type="button" (click)="settingsOpen.set(false); theme.toggleTheme()">Theme</button>
+          <button type="button" [disabled]="busy()" (click)="settingsOpen.set(false); load(true)">Rescan</button>
+        </div>
       }
     </div>
     </div>
@@ -33,10 +54,54 @@
     <section class="grid">
       @for (entry of entries(); track entry.id) {
         @let media = cardMedia(entry);
-        <ui-card variant="outlined"><ui-card-header [icon]="media.icon" [iconAriaLabel]="media.label">{{ media.label }} · {{ entry.title }}</ui-card-header><ui-card-body><p>{{ entry.detail }}</p></ui-card-body><ui-card-footer><ui-button variant="outlined" (click)="open(entry)">Open {{ entry.album ? 'album' : 'video' }}</ui-button></ui-card-footer></ui-card>
+        <ui-card variant="outlined" [interactive]="!editMode()" [attr.role]="editMode() ? 'group' : 'button'" [attr.tabindex]="editMode() ? null : 0" [class.card-editing]="editing()?.id === entry.id" [ariaLabel]="(editMode() ? 'Edit ' : 'Open ') + entry.title" (click)="open(entry)" (keydown)="openCardWithKey($event, entry)">
+          <ui-card-header [icon]="media.icon" [iconAriaLabel]="media.label"><span class="card-title" [title]="entry.title">{{ entry.title }}</span></ui-card-header>
+          <ui-card-body>
+            @if (editing(); as draft) {
+              @if (draft.id === entry.id) {
+                <form class="card-edit-form" (click)="$event.stopPropagation()" (submit)="saveDraft($event)">
+                  <label>Display name<input type="text" required maxlength="500" [value]="draft.title" (input)="changeDraft('title', $any($event.target).value)" [disabled]="savingIds().includes(entry.id)"></label>
+                  <label>Tags<input type="text" placeholder="Comma-separated tags" [value]="draft.tags" (input)="changeDraft('tags', $any($event.target).value)" [disabled]="savingIds().includes(entry.id)"></label>
+                  <label>Projection<select [value]="draft.projection" (change)="changeDraft('projection', $any($event.target).value)" [disabled]="savingIds().includes(entry.id)"><option value="flat">Flat</option><option value="180">VR 180°</option><option value="360">VR 360°</option></select></label>
+                  <label>Stereo<select [value]="draft.stereoMode" (change)="changeDraft('stereoMode', $any($event.target).value)" [disabled]="savingIds().includes(entry.id)"><option value="mono">Mono</option><option value="sbs">Side by side</option><option value="ou">Over-under</option></select></label>
+                  <div class="edit-form-actions"><button type="button" (click)="cancelEdit()" [disabled]="savingIds().includes(entry.id)">Cancel</button><button type="submit" [disabled]="savingIds().includes(entry.id) || !draft.title.trim()">{{ savingIds().includes(entry.id) ? 'Saving…' : 'Save' }}</button></div>
+                </form>
+              }
+            }
+            @if (editing()?.id !== entry.id) {
+            @if (entry.video; as video) {
+              @if (video.posterFrames?.length) {
+                <div class="card-posters" role="region" tabindex="0" [attr.aria-label]="entry.title + ' poster frames; scroll to see all 10'">
+                  @for (frame of video.posterFrames; track frame.url) {
+                    <div class="card-poster">
+                      <img [src]="frame.url" [alt]="entry.title + ' at ' + frameTime(frame.time)" loading="lazy">
+                      <span>{{ frameTime(frame.time) }}</span>
+                    </div>
+                  }
+                </div>
+              } @else {
+                <div class="card-poster-pending"><ui-icon [svg]="media.icon" [size]="40" /><span>Poster frames pending</span></div>
+              }
+            }
+            <p>{{ entry.detail }}</p>
+            }
+            @if (editMode() && editing()?.id !== entry.id) {
+              @if (entry.video; as video) {
+                <div class="card-edit-bar" (click)="$event.stopPropagation()">
+                  <div class="type-filter" role="group" aria-label="Video presentation">
+                    <button type="button" [disabled]="savingIds().includes(video.id)" [attr.aria-pressed]="video.projection === 'flat' && video.stereoMode === 'mono'" (click)="setPresentation(video, 'flat')">Flat</button>
+                    <button type="button" [disabled]="savingIds().includes(video.id)" [attr.aria-pressed]="video.projection !== 'flat' || video.stereoMode !== 'mono'" (click)="setPresentation(video, 'vr')">VR</button>
+                  </div>
+                  <button type="button" class="settings-toggle" [disabled]="savingIds().includes(video.id)" aria-label="Edit display name and tags" title="Edit display name and tags" (click)="startEdit(video)"><ui-icon [svg]="formIcon" [size]="20" /></button>
+                </div>
+              }
+            }
+          </ui-card-body>
+        </ui-card>
       } @empty { @if (!busy()) { <p>No matching media. Add files to a configured media root, then rescan.</p> } }
     </section>
   }
+  @if (editError()) { <p role="alert">{{ editError() }}</p> }
   @if (error()) { <p role="alert">{{ error() }}</p> }
   @if (diagnostics()) { <details open><summary>Device capabilities</summary><pre class="diagnostics">{{ diagnostics() }}</pre></details> }
   @if (snapshot().warnings.length) { <details><summary>Library warnings ({{ snapshot().warnings.length }})</summary>@for (warning of snapshot().warnings; track $index) { <p>{{ warning }}</p> }</details> }

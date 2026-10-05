@@ -12,9 +12,19 @@ export interface MediaItem {
   stereoMode: 'mono' | 'sbs' | 'ou';
   tags: string[];
   contentUrl: string;
+  duration?: number;
+  posterFrames?: { time: number; url: string }[];
 }
 export interface LibrarySnapshot {
   items: MediaItem[];
   warnings: string[];
   scannedAt: string;
+}
+
+export interface MediaMetadataUpdate {
+  title?: string;
+  tags?: string[];
+  presentation?: 'flat' | 'vr';
+  projection?: 'flat' | '180' | '360';
+  stereoMode?: 'mono' | 'sbs' | 'ou';
 }

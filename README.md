@@ -5,6 +5,7 @@ A local filesystem media library for browser playback, built with NestJS, Angula
 ## Run locally
 
 ```sh
+# Install ffmpeg (including ffprobe) and make both available on PATH.
 npm ci
 npm run dev
 ```
@@ -35,6 +36,12 @@ Projection accepts `flat`, `180`, or `360`; stereo accepts `mono`, `sbs`, or `ou
 
 Filename inference removes the extension, treats spaces as underscores, and reads the final two tokens as projection and stereo mode in either order (case-insensitive). The pair must contain `180`/`360` and `sbs`/`ou`, such as `walk_180_sbs.mp4`, `walk_sbs_180.mp4` or `photo ou 360.jpg`. Missing, empty or unrecognized tokens default to flat/mono. Files are not renamed. Explicit sidecar values override filename inference.
 
+## Movie poster frames
+
+A background queue extracts 10 JPEG frames per movie at 5%, 15%, …, 95% of its duration. The library shows the first frame on the card and all 10 with timestamps in the movie view, updating automatically as extraction completes. FFmpeg and ffprobe must be on the server PATH; Docker includes them.
+
+Startup, Rescan, and a background scan every minute check for new or modified videos. Generated metadata records the source modification time and size; unchanged movies with a complete frame set are skipped without probing or decoding. Missing frames are repaired. Frames and their generated metadata live under `METADATA_ROOT/posters/<id>/`, separately from editable JSON sidecars. Extraction runs one movie and one frame at a time in child processes, publishes only complete sets, and retries failures on the next scan. Originals modified during extraction are discarded and retried after reindexing. Failed extraction is logged without preventing playback.
+
 ## Docker
 
 ```sh
@@ -45,20 +52,22 @@ docker compose up --build
 
 Browse http://localhost:3000. Docker Compose reads host paths from the root `.env` file: `MEDIA_PATH` is mounted read-only at `/media/local`, and `METADATA_PATH` is mounted writable at `/metadata`. For a fresh checkout, copy `.env.example` to `.env` and set both variables to absolute paths on your host. The example uses `/Data/MediaStreamer/Media` and `/Data/MediaStreamer/Data`. `.env` is excluded from Git and the Docker build context. These Compose host-path variables do not change the local Node server's `MEDIA_ROOTS`/`METADATA_ROOT` configuration.
 
-Metadata remains persistent and can be edited externally; application metadata editing is not implemented yet. The container runs as a non-root user; the media directory must be readable and the metadata directory writable by it.
+Metadata remains persistent and can be edited externally or through Edit mode in the gear menu. Video cards expose Flat/VR and a form for display name, comma-separated tags, projection, and stereo layout. Edits are atomically saved to the per-file JSON sidecar, preserve unrelated fields, and never rename originals. VR uses filename hints when available, otherwise defaults to 180° side by side. The container runs as a non-root user; the media directory must be readable and the metadata directory writable by it.
 
 ## API
 
 - `GET /api/media`: catalogue snapshot (`items`, `warnings`, `scannedAt`).
 - `GET /api/media/:id`: public file metadata.
+- `PATCH /api/media/:id/metadata`: save title, tags, presentation, projection, or stereo overrides.
 - `GET|HEAD /api/media/:id/content`: original bytes, HTTP Range support and cache validators.
-- `POST /api/library/rescan`: rebuild the catalogue.
+- `POST /api/library/rescan`: rebuild the catalogue and queue poster extraction.
+- `GET /api/media/:id/posters/:generation/:index`: generated JPEG frame (index 0–9).
 
 `npm test` verifies indexing, filesystem boundaries and the actual Nest HTTP endpoint's ranges, suffix requests, HEAD responses and cache validators. `npm run build` checks backend TypeScript and Angular templates.
 
 ## Scope
 
-This version implements browsing, search, directory image albums, flat playback, byte streaming and an experimental WebXR viewer. It does not yet generate thumbnails, probe codecs, edit metadata, accept uploads or transcode. Cards intentionally do not download originals as thumbnails. Large original images can still exceed headset texture or memory limits inside an album.
+This version implements browsing, search, directory image albums, flat playback, byte streaming and an experimental WebXR viewer. It generates movie poster frames but does not yet generate image thumbnails, probe codecs, accept uploads or transcode. Large original images can still exceed headset texture or memory limits inside an album.
 
 ## Quest / VR testing
 

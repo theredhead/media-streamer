@@ -56,6 +56,12 @@ test('real Nest HTTP endpoint streams ranges, suffixes, HEAD, validators and mis
     assert.equal(await response.text(), '0123456789');
     assert.equal((await fetch(`${base}/api/media/unknown/content`)).status, 404);
     assert.equal((await fetch(`${base}/api/library/rescan`, { method: 'POST' })).status, 201);
+    response = await fetch(`${base}/api/media/${catalogue.items[0].id}/metadata`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title: 'Edited movie', tags: ['test'], presentation: 'vr' }) });
+    assert.equal(response.status, 200);
+    assert.equal((await response.json()).title, 'Edited movie');
+    response = await fetch(`${base}/api/media/${catalogue.items[0].id}/metadata`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title: '' }) });
+    assert.equal(response.status, 400);
+    assert.equal((await fetch(`${base}/api/media/unknown/metadata`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: '{}' })).status, 404);
   } finally {
     const exited = new Promise<void>(resolve => child.once('exit', () => resolve()));
     if (child.exitCode === null) { child.kill('SIGTERM'); await exited; }

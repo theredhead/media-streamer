@@ -51,3 +51,47 @@ test('unavailable roots produce a warning without preventing other roots from sc
   assert.equal(snapshot.items.length, 0);
   assert.equal(snapshot.warnings.length, 1);
 });
+
+test('metadata edits persist overrides, preserve unrelated fields and serialize updates', async () => {
+  const temporary = await mkdtemp(path.join(os.tmpdir(), 'media-edit-'));
+  try {
+    const media = path.join(temporary, 'media');
+    const metadata = path.join(temporary, 'metadata');
+    await mkdir(media);
+    await mkdir(path.join(metadata, 'test'), { recursive: true });
+    await writeFile(path.join(media, 'clip_360_sbs.mp4'), 'movie');
+    const sidecar = path.join(metadata, 'test', 'clip_360_sbs.mp4.json');
+    await writeFile(sidecar, JSON.stringify({ favorite: true, customField: 'preserved' }));
+    const library = new MediaLibrary([{ id: 'test', path: media }], metadata);
+    const id = (await library.rescan()).items[0].id;
+    await Promise.all([library.updateMetadata(id, { title: ' Display name ', tags: ['holiday', 'holiday'] }), library.updateMetadata(id, { presentation: 'flat' })]);
+    let item = (await library.rescan()).items[0];
+    assert.equal(item.title, 'Display name');
+    assert.deepEqual(item.tags, ['holiday']);
+    assert.equal(item.projection, 'flat');
+    assert.equal(item.stereoMode, 'mono');
+    const { readFile } = await import('node:fs/promises');
+    const saved = JSON.parse(await readFile(sidecar, 'utf8'));
+    assert.equal(saved.favorite, true);
+    assert.equal(saved.customField, 'preserved');
+    item = await library.updateMetadata(id, { presentation: 'vr' });
+    assert.equal(item.projection, '360');
+    assert.equal(item.stereoMode, 'sbs');
+    await writeFile(path.join(media, 'plain.mp4'), 'movie');
+    const plain = (await library.rescan()).items.find(value => value.relativePath === 'plain.mp4')!;
+    const vr = await library.updateMetadata(plain.id, { presentation: 'vr' });
+    assert.equal(vr.projection, '180');
+    assert.equal(vr.stereoMode, 'sbs');
+    await assert.rejects(library.updateMetadata(id, { title: ' ' }));
+    await assert.rejects(library.updateMetadata(id, { relativePath: '../outside' }));
+    await writeFile(sidecar, '{broken');
+    await assert.rejects(library.updateMetadata(id, { title: 'Do not overwrite' }));
+    assert.equal(await readFile(sidecar, 'utf8'), '{broken');
+    await rm(sidecar);
+    const outside = path.join(temporary, 'outside.json');
+    await writeFile(outside, '{}');
+    await symlink(outside, sidecar);
+    await assert.rejects(library.updateMetadata(id, { title: 'Unsafe' }));
+    assert.equal(await readFile(outside, 'utf8'), '{}');
+  } finally { await rm(temporary, { recursive: true, force: true }); }
+});
